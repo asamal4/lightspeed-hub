@@ -53,7 +53,7 @@ func Provision(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, ns); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating namespace: %w", err)
+			return fmt.Errorf("%w: %w", ErrCreatingNamespace, err)
 		}
 	}
 
@@ -66,7 +66,7 @@ func Provision(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, sa); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating ServiceAccount: %w", err)
+			return fmt.Errorf("%w: %w", ErrCreatingServiceAccount, err)
 		}
 	}
 
@@ -90,7 +90,7 @@ func Provision(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, crbReader); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating ClusterRoleBinding cluster-reader: %w", err)
+			return fmt.Errorf("%w cluster-reader: %w", ErrCreatingClusterRoleBinding, err)
 		}
 	}
 
@@ -114,7 +114,7 @@ func Provision(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, crbMonitoring); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating ClusterRoleBinding cluster-monitoring-view: %w", err)
+			return fmt.Errorf("%w cluster-monitoring-view: %w", ErrCreatingClusterRoleBinding, err)
 		}
 	}
 
