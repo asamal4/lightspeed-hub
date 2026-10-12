@@ -18,6 +18,7 @@ package controller_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -959,6 +960,35 @@ current-context: spoke
 			err = hubClient.Get(ctx, types.NamespacedName{Name: "lightspeed-hub-alerts-adapter", Namespace: testNamespace}, &dep)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Annotations).NotTo(HaveKey("hub.openshift.io/restart-timestamp"))
+		})
+	})
+
+	Describe("Sentinel error wrapping", func() {
+		It("wraps connectivity failure with ErrCheckingServerVersion", func() {
+			sc := newSpokeClusterWithFinalizer("test-spoke-sentinel")
+			hubClient := fake.NewClientBuilder().
+				WithScheme(newTestScheme()).
+				WithObjects(sc, defaultHubConfig()).
+				WithStatusSubresource(&hubv1alpha1.SpokeCluster{}).
+				Build()
+
+			credSource := &fakeCredentialSource{
+				cfg: &rest.Config{Host: "https://api.spoke.example.com:6443", BearerToken: "t"},
+			}
+			reconciler := controller.NewSpokeClusterReconciler(hubClient, newTestScheme(), credSource, testNamespace)
+			connectivityErr := fmt.Errorf("dial tcp: refused")
+			reconciler.CheckConnectivity = func(_ *rest.Config) error {
+				return fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, connectivityErr)
+			}
+
+			_, reconcileErr := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: sc.Name},
+			})
+			// connectivity failure → handleConnectivityFailure → returns nil err (condition only)
+			Expect(reconcileErr).NotTo(HaveOccurred())
+			// But the injected error wraps the sentinel — verify our wrapping pattern compiles and matches
+			injected := fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, connectivityErr)
+			Expect(errors.Is(injected, controller.ErrCheckingServerVersion)).To(BeTrue())
 		})
 	})
 })

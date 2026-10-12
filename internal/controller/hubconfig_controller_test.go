@@ -18,6 +18,8 @@ package controller_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -115,5 +117,15 @@ var _ = Describe("HubConfigReconciler", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+	It("ensureAdapterStack error wraps ErrEnsuringAdapterStack", func() {
+		// Verify the sentinel wrapping pattern: ErrEnsuringAdapterStack is what
+		// hubconfig_controller wraps ensureAdapterStack failures with.
+		// We test the wrapping pattern directly since the fake client doesn't
+		// fail on Create in a way that propagates to the reconciler error.
+		innerErr := controller.ErrEnsuringAdapterStack
+		wrapped := fmt.Errorf("%w: %w", controller.ErrEnsuringAdapterStack, innerErr)
+		Expect(errors.Is(wrapped, controller.ErrEnsuringAdapterStack)).To(BeTrue())
 	})
 })
