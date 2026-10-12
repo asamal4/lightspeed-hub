@@ -18,6 +18,7 @@ package credential
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -103,11 +104,12 @@ func adminSecret(name, namespace string, data map[string][]byte) *corev1.Secret 
 
 func TestSecretCredentialSource_GetRESTConfig(t *testing.T) {
 	tests := []struct {
-		name    string
-		spoke   *hubv1alpha1.SpokeCluster
-		secrets []client.Object
-		wantErr bool
-		errMsg  string
+		name         string
+		spoke        *hubv1alpha1.SpokeCluster
+		secrets      []client.Object
+		wantErr      bool
+		errMsg       string
+		wantSentinel error
 	}{
 		{
 			name:  "valid kubeconfig",
@@ -120,11 +122,12 @@ func TestSecretCredentialSource_GetRESTConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "secret not found",
-			spoke:   spokeWithSecret("missing-secret", "openshift-lightspeed"),
-			secrets: []client.Object{},
-			wantErr: true,
-			errMsg:  "reading admin kubeconfig secret",
+			name:         "secret not found",
+			spoke:        spokeWithSecret("missing-secret", "openshift-lightspeed"),
+			secrets:      []client.Object{},
+			wantErr:      true,
+			errMsg:       "reading admin kubeconfig secret",
+			wantSentinel: ErrReadingSecret,
 		},
 		{
 			name:  "missing kubeconfig key",
@@ -134,15 +137,17 @@ func TestSecretCredentialSource_GetRESTConfig(t *testing.T) {
 					"data": []byte("some other data"),
 				}),
 			},
-			wantErr: true,
-			errMsg:  "missing 'kubeconfig' key",
+			wantErr:      true,
+			errMsg:       "missing 'kubeconfig' key",
+			wantSentinel: ErrMissingKubeconfigKey,
 		},
 		{
-			name:    "nil secret credential source",
-			spoke:   spokeWithNoSecret(),
-			secrets: []client.Object{},
-			wantErr: true,
-			errMsg:  "has no secret credential source",
+			name:         "nil secret credential source",
+			spoke:        spokeWithNoSecret(),
+			secrets:      []client.Object{},
+			wantErr:      true,
+			errMsg:       "has no secret credential source",
+			wantSentinel: ErrNoSecretSource,
 		},
 		{
 			name:  "kubeconfig with file paths rejected",
@@ -169,8 +174,9 @@ current-context: spoke
 `),
 				}),
 			},
-			wantErr: true,
-			errMsg:  "certificate-authority file path",
+			wantErr:      true,
+			errMsg:       "certificate-authority file path",
+			wantSentinel: ErrCertFilePathUsed,
 		},
 		{
 			name:  "kubeconfig without static credentials rejected",
@@ -195,8 +201,9 @@ current-context: spoke
 `),
 				}),
 			},
-			wantErr: true,
-			errMsg:  "must contain a token or client certificate",
+			wantErr:      true,
+			errMsg:       "must contain a token or client certificate",
+			wantSentinel: ErrUnsupportedAuth,
 		},
 		{
 			name:  "invalid kubeconfig data",
@@ -206,8 +213,9 @@ current-context: spoke
 					"kubeconfig": []byte("invalid yaml data"),
 				}),
 			},
-			wantErr: true,
-			errMsg:  "parsing kubeconfig from secret",
+			wantErr:      true,
+			errMsg:       "parsing kubeconfig from secret",
+			wantSentinel: ErrParsingKubeconfig,
 		},
 	}
 
@@ -223,6 +231,9 @@ current-context: spoke
 				}
 				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
 					t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
+					t.Fatalf("expected errors.Is(err, %v) to be true, got err=%v", tt.wantSentinel, err)
 				}
 			} else {
 				if err != nil {

@@ -17,6 +17,7 @@ limitations under the License.
 package credential
 
 import (
+	"errors"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -226,6 +227,20 @@ func TestBuildStandingKubeconfig_InsecureSkipTLSVerify(t *testing.T) {
 	}
 	if roundTripCfg.Host != sc.Spec.APIServer {
 		t.Errorf("Host = %q, want %q", roundTripCfg.Host, sc.Spec.APIServer)
+	}
+}
+
+func TestBuildStandingKubeconfig_OwnerRefError(t *testing.T) {
+	cfg := &rest.Config{Host: "https://127.0.0.1:6443", BearerToken: "token"}
+	sc := spokeCluster()
+	// Empty scheme — SpokeCluster not registered, SetControllerReference fails
+	emptyScheme := runtime.NewScheme()
+	_, err := BuildStandingKubeconfig(cfg, sc, "openshift-lightspeed", emptyScheme)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrSettingOwnerRef) {
+		t.Errorf("expected errors.Is(err, ErrSettingOwnerRef), got: %v", err)
 	}
 }
 
