@@ -44,7 +44,7 @@ func BuildStandingKubeconfig(cfg *rest.Config, sc *hubv1alpha1.SpokeCluster, ope
 
 	kubeconfigBytes, err := clientcmd.Write(kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("serializing standing kubeconfig for spoke %q: %w", sc.Name, err)
+		return nil, fmt.Errorf("%w for spoke %q: %w", ErrSerializingKubeconfig, sc.Name, err)
 	}
 
 	secret := &corev1.Secret{
@@ -58,7 +58,7 @@ func BuildStandingKubeconfig(cfg *rest.Config, sc *hubv1alpha1.SpokeCluster, ope
 	}
 
 	if err := controllerutil.SetControllerReference(sc, secret, scheme); err != nil {
-		return nil, fmt.Errorf("setting controller reference on standing kubeconfig for spoke %q: %w", sc.Name, err)
+		return nil, fmt.Errorf("%w on standing kubeconfig for spoke %q: %w", ErrSettingOwnerRef, sc.Name, err)
 	}
 
 	return secret, nil

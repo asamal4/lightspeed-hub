@@ -961,4 +961,39 @@ current-context: spoke
 			Expect(dep.Spec.Template.Annotations).NotTo(HaveKey("hub.openshift.io/restart-timestamp"))
 		})
 	})
+
+	Describe("Sentinel error wrapping", func() {
+		It("surfaces ErrCheckingServerVersion text in Connected condition message", func() {
+			sc := newSpokeClusterWithFinalizer("test-spoke-sentinel")
+			hubClient := fake.NewClientBuilder().
+				WithScheme(newTestScheme()).
+				WithObjects(sc, defaultHubConfig()).
+				WithStatusSubresource(&hubv1alpha1.SpokeCluster{}).
+				Build()
+
+			credSource := &fakeCredentialSource{
+				cfg: &rest.Config{Host: "https://api.spoke.example.com:6443", BearerToken: "t"},
+			}
+			reconciler := controller.NewSpokeClusterReconciler(hubClient, newTestScheme(), credSource, testNamespace)
+			// Inject a connectivity error that wraps the sentinel, as defaultCheckConnectivity does.
+			reconciler.CheckConnectivity = func(_ *rest.Config) error {
+				return fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, fmt.Errorf("dial tcp: refused"))
+			}
+
+			_, reconcileErr := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: sc.Name},
+			})
+			// Connectivity failure → handleConnectivityFailure → nil return, condition only.
+			Expect(reconcileErr).NotTo(HaveOccurred())
+
+			// Verify the reconciler surfaces the sentinel text in the Connected condition message,
+			// which is the observable behavior callers rely on.
+			var updated hubv1alpha1.SpokeCluster
+			Expect(hubClient.Get(ctx, types.NamespacedName{Name: sc.Name}, &updated)).To(Succeed())
+			condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeConnected)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Message).To(ContainSubstring(controller.ErrCheckingServerVersion.Error()))
+		})
+	})
 })

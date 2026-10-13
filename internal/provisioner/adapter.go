@@ -50,7 +50,7 @@ func ProvisionAdapter(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, sa); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating alert adapter ServiceAccount: %w", err)
+			return fmt.Errorf("%w: %w", ErrCreatingAdapterServiceAccount, err)
 		}
 	}
 
@@ -77,7 +77,7 @@ func ProvisionAdapter(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, rb); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating alert adapter RoleBinding: %w", err)
+			return fmt.Errorf("%w: %w", ErrCreatingAdapterRoleBinding, err)
 		}
 	}
 
@@ -93,7 +93,7 @@ func ProvisionAdapter(ctx context.Context, spokeClient client.Client) error {
 	}
 	if err := spokeClient.Create(ctx, tokenSecret); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("creating alert adapter token Secret: %w", err)
+			return fmt.Errorf("%w: %w", ErrCreatingAdapterTokenSecret, err)
 		}
 	}
 

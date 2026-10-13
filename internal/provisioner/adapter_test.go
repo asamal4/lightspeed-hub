@@ -18,6 +18,8 @@ package provisioner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -27,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestProvisionAdapter(t *testing.T) {
@@ -236,6 +239,73 @@ func TestDeprovisionAdapter(t *testing.T) {
 				if err == nil {
 					t.Errorf("Token Secret %s/%s still exists after DeprovisionAdapter", ManagedNamespace, AlertAdapterTokenSecret)
 				}
+			}
+		})
+	}
+}
+
+func TestProvisionAdapter_SentinelErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	injectErr := fmt.Errorf("server unavailable")
+
+	tests := []struct {
+		name         string
+		interceptFn  interceptor.Funcs
+		wantSentinel error
+	}{
+		{
+			name: "serviceaccount create failure wraps ErrCreatingAdapterServiceAccount",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingAdapterServiceAccount,
+		},
+		{
+			name: "rolebinding create failure wraps ErrCreatingAdapterRoleBinding",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*rbacv1.RoleBinding); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingAdapterRoleBinding,
+		},
+		{
+			name: "token secret create failure wraps ErrCreatingAdapterTokenSecret",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if s, ok := obj.(*corev1.Secret); ok && s.Type == corev1.SecretTypeServiceAccountToken {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingAdapterTokenSecret,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithInterceptorFuncs(tt.interceptFn).
+				Build()
+			err := ProvisionAdapter(context.Background(), c)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantSentinel) {
+				t.Errorf("expected errors.Is(err, %v), got: %v", tt.wantSentinel, err)
 			}
 		})
 	}

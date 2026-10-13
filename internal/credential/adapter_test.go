@@ -17,6 +17,7 @@ limitations under the License.
 package credential
 
 import (
+	"errors"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,6 +88,25 @@ func TestBuildAdapterCredentialSecret(t *testing.T) {
 	}
 	if secret.OwnerReferences[0].Name != "prod-rosa-east" {
 		t.Errorf("OwnerReference.Name = %q, want %q", secret.OwnerReferences[0].Name, "prod-rosa-east")
+	}
+}
+
+func TestBuildAdapterCredentialSecret_OwnerRefError(t *testing.T) {
+	sc := &hubv1alpha1.SpokeCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-spoke",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: hubv1alpha1.SpokeClusterSpec{APIServer: "https://api.test.example.com:6443"},
+	}
+	// Empty scheme — SpokeCluster not registered, SetControllerReference fails
+	emptyScheme := runtime.NewScheme()
+	_, err := BuildAdapterCredentialSecret(sc, "https://am.example.com", "token", "", "ns", emptyScheme)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrSettingOwnerRef) {
+		t.Errorf("expected errors.Is(err, ErrSettingOwnerRef), got: %v", err)
 	}
 }
 

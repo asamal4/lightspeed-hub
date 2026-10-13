@@ -280,7 +280,7 @@ func ensureAdapterStack(ctx context.Context, c client.Client, namespace, image s
 	for _, ar := range adapterResources(namespace) {
 		if err := c.Create(ctx, ar.resource); err != nil {
 			if !apierrors.IsAlreadyExists(err) {
-				return fmt.Errorf("creating %s %s: %w", ar.kind, ar.resource.GetName(), err)
+				return fmt.Errorf("%w %s %s: %w", ErrCreatingAdapterResource, ar.kind, ar.resource.GetName(), err)
 			}
 			if ar.update {
 				if err := ensureAdapterResource(ctx, c, ar); err != nil {
@@ -296,11 +296,11 @@ func ensureAdapterStack(ctx context.Context, c client.Client, namespace, image s
 func ensureAdapterResource(ctx context.Context, c client.Client, ar adapterResource) error {
 	existing := ar.resource.DeepCopyObject().(client.Object)
 	if err := c.Get(ctx, client.ObjectKeyFromObject(ar.resource), existing); err != nil {
-		return fmt.Errorf("getting existing %s %s: %w", ar.kind, ar.resource.GetName(), err)
+		return fmt.Errorf("%w %s %s: %w", ErrGettingAdapterResource, ar.kind, ar.resource.GetName(), err)
 	}
 	ar.resource.SetResourceVersion(existing.GetResourceVersion())
 	if err := c.Update(ctx, ar.resource); err != nil {
-		return fmt.Errorf("updating %s %s: %w", ar.kind, ar.resource.GetName(), err)
+		return fmt.Errorf("%w %s %s: %w", ErrUpdatingAdapterResource, ar.kind, ar.resource.GetName(), err)
 	}
 	return nil
 }
@@ -313,18 +313,18 @@ func ensureAdapterDeployment(ctx context.Context, c client.Client, namespace, im
 		return nil
 	}
 	if !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("creating Deployment %s: %w", desired.Name, err)
+		return fmt.Errorf("%w %s: %w", ErrCreatingAdapterDeployment, desired.Name, err)
 	}
 
 	var existing appsv1.Deployment
 	if err := c.Get(ctx, client.ObjectKeyFromObject(desired), &existing); err != nil {
-		return fmt.Errorf("getting existing Deployment %s: %w", desired.Name, err)
+		return fmt.Errorf("%w %s: %w", ErrGettingAdapterDeployment, desired.Name, err)
 	}
 
 	if len(existing.Spec.Template.Spec.Containers) > 0 && existing.Spec.Template.Spec.Containers[0].Image != image {
 		existing.Spec.Template.Spec.Containers[0].Image = image
 		if err := c.Update(ctx, &existing); err != nil {
-			return fmt.Errorf("updating Deployment %s image: %w", desired.Name, err)
+			return fmt.Errorf("%w %s image: %w", ErrUpdatingAdapterDeployment, desired.Name, err)
 		}
 	}
 	return nil
@@ -348,7 +348,7 @@ func teardownAdapterStack(ctx context.Context, c client.Client, namespace string
 			if !apierrors.IsNotFound(err) {
 				logf.FromContext(ctx).Error(err, "failed to delete adapter resource", "kind", ar.kind, "name", ar.resource.GetName())
 				if firstErr == nil {
-					firstErr = fmt.Errorf("deleting %s %s: %w", ar.kind, ar.resource.GetName(), err)
+					firstErr = fmt.Errorf("%w %s %s: %w", ErrDeletingAdapterResource, ar.kind, ar.resource.GetName(), err)
 				}
 			}
 		}
@@ -363,7 +363,7 @@ func restartAdapterDeployment(ctx context.Context, c client.Client, namespace st
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("getting adapter Deployment for restart: %w", err)
+		return fmt.Errorf("%w: %w", ErrGettingAdapterForRestart, err)
 	}
 
 	if dep.Spec.Template.Annotations == nil {
@@ -372,7 +372,7 @@ func restartAdapterDeployment(ctx context.Context, c client.Client, namespace st
 	dep.Spec.Template.Annotations[adapterRestartAnnotation] = time.Now().UTC().Format(time.RFC3339)
 
 	if err := c.Update(ctx, &dep); err != nil {
-		return fmt.Errorf("updating adapter Deployment for restart: %w", err)
+		return fmt.Errorf("%w: %w", ErrUpdatingAdapterForRestart, err)
 	}
 	return nil
 }

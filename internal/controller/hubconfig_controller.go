@@ -70,11 +70,11 @@ func (r *HubConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if controllerutil.ContainsFinalizer(&hc, hubConfigAdapterFinalizer) {
 			logger.Info("HubConfig deleting, tearing down adapter stack")
 			if err := teardownAdapterStack(ctx, r.client, r.operatorNamespace); err != nil {
-				return ctrl.Result{}, fmt.Errorf("tearing down adapter stack: %w", err)
+				return ctrl.Result{}, fmt.Errorf("%w: %w", ErrTearingDownAdapterStack, err)
 			}
 			controllerutil.RemoveFinalizer(&hc, hubConfigAdapterFinalizer)
 			if err := r.client.Update(ctx, &hc); err != nil {
-				return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+				return ctrl.Result{}, fmt.Errorf("%w: %w", ErrRemovingFinalizer, err)
 			}
 		}
 		return ctrl.Result{}, nil
@@ -83,12 +83,12 @@ func (r *HubConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if !controllerutil.ContainsFinalizer(&hc, hubConfigAdapterFinalizer) {
 		controllerutil.AddFinalizer(&hc, hubConfigAdapterFinalizer)
 		if err := r.client.Update(ctx, &hc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
+			return ctrl.Result{}, fmt.Errorf("%w: %w", ErrAddingFinalizer, err)
 		}
 	}
 
 	if err := ensureAdapterStack(ctx, r.client, r.operatorNamespace, r.adapterImage); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensuring adapter stack: %w", err)
+		return ctrl.Result{}, fmt.Errorf("%w: %w", ErrEnsuringAdapterStack, err)
 	}
 
 	logger.Info("Adapter stack ensured")

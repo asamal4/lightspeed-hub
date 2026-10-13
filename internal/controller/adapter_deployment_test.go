@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,7 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestAdapterServiceAccount(t *testing.T) {
@@ -347,4 +351,99 @@ func TestRestartAdapterDeployment_NoOpWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not error when deployment missing: %v", err)
 	}
+}
+
+func TestEnsureAdapterStack_SentinelErrors(t *testing.T) {
+	ctx := context.Background()
+	injectErr := fmt.Errorf("server unavailable")
+
+	t.Run("create resource failure wraps ErrCreatingAdapterResource", func(t *testing.T) {
+		fc := fake.NewClientBuilder().
+			WithScheme(adapterTestScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).Build()
+		err := ensureAdapterStack(ctx, fc, "openshift-lightspeed", "img:v1")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrCreatingAdapterResource) {
+			t.Errorf("expected errors.Is(err, ErrCreatingAdapterResource), got: %v", err)
+		}
+	})
+
+	t.Run("deployment create failure wraps ErrCreatingAdapterDeployment", func(t *testing.T) {
+		fc := fake.NewClientBuilder().
+			WithScheme(adapterTestScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*appsv1.Deployment); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).Build()
+		err := ensureAdapterStack(ctx, fc, "openshift-lightspeed", "img:v1")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrCreatingAdapterDeployment) {
+			t.Errorf("expected errors.Is(err, ErrCreatingAdapterDeployment), got: %v", err)
+		}
+	})
+}
+
+func TestTeardownAdapterStack_SentinelErrors(t *testing.T) {
+	ctx := context.Background()
+	injectErr := fmt.Errorf("server unavailable")
+
+	t.Run("delete failure wraps ErrDeletingAdapterResource", func(t *testing.T) {
+		fc := fake.NewClientBuilder().
+			WithScheme(adapterTestScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*appsv1.Deployment); ok {
+						return injectErr
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+			}).Build()
+		err := teardownAdapterStack(ctx, fc, "openshift-lightspeed")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrDeletingAdapterResource) {
+			t.Errorf("expected errors.Is(err, ErrDeletingAdapterResource), got: %v", err)
+		}
+	})
+}
+
+func TestRestartAdapterDeployment_SentinelErrors(t *testing.T) {
+	ctx := context.Background()
+	injectErr := fmt.Errorf("server unavailable")
+
+	t.Run("get failure wraps ErrGettingAdapterForRestart", func(t *testing.T) {
+		fc := fake.NewClientBuilder().
+			WithScheme(adapterTestScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key types.NamespacedName, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*appsv1.Deployment); ok {
+						return injectErr
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+		err := restartAdapterDeployment(ctx, fc, "openshift-lightspeed")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrGettingAdapterForRestart) {
+			t.Errorf("expected errors.Is(err, ErrGettingAdapterForRestart), got: %v", err)
+		}
+	})
 }

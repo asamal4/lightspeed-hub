@@ -18,6 +18,8 @@ package provisioner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -27,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestProvision(t *testing.T) {
@@ -163,6 +166,73 @@ func TestProvision(t *testing.T) {
 				}, crbMonitoring); err != nil {
 					t.Errorf("ClusterRoleBinding %s not found: %v", ClusterRoleBindingMonitoringView, err)
 				}
+			}
+		})
+	}
+}
+
+func TestProvision_SentinelErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	injectErr := fmt.Errorf("server unavailable")
+
+	tests := []struct {
+		name         string
+		interceptFn  interceptor.Funcs
+		wantSentinel error
+	}{
+		{
+			name: "namespace create failure wraps ErrCreatingNamespace",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*corev1.Namespace); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingNamespace,
+		},
+		{
+			name: "serviceaccount create failure wraps ErrCreatingServiceAccount",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingServiceAccount,
+		},
+		{
+			name: "clusterrolebinding create failure wraps ErrCreatingClusterRoleBinding",
+			interceptFn: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*rbacv1.ClusterRoleBinding); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+			wantSentinel: ErrCreatingClusterRoleBinding,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithInterceptorFuncs(tt.interceptFn).
+				Build()
+			err := Provision(context.Background(), c)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantSentinel) {
+				t.Errorf("expected errors.Is(err, %v), got: %v", tt.wantSentinel, err)
 			}
 		})
 	}

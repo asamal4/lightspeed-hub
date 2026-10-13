@@ -38,48 +38,48 @@ func NewSecretCredentialSource(hubClient client.Reader) *SecretCredentialSource 
 
 func (s *SecretCredentialSource) GetRESTConfig(ctx context.Context, sc *hubv1alpha1.SpokeCluster) (*rest.Config, error) {
 	if sc.Spec.CredentialSource.Secret == nil {
-		return nil, fmt.Errorf("spoke %q has no secret credential source", sc.Name)
+		return nil, fmt.Errorf("spoke %q: %w", sc.Name, ErrNoSecretSource)
 	}
 
 	ref := sc.Spec.CredentialSource.Secret
 	var secret corev1.Secret
 	key := client.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}
 	if err := s.hubClient.Get(ctx, key, &secret); err != nil {
-		return nil, fmt.Errorf("reading admin kubeconfig secret %s/%s: %w", ref.Namespace, ref.Name, err)
+		return nil, fmt.Errorf("%w %s/%s: %w", ErrReadingSecret, ref.Namespace, ref.Name, err)
 	}
 
 	kubeconfig, ok := secret.Data["kubeconfig"]
 	if !ok {
-		return nil, fmt.Errorf("admin kubeconfig secret %s/%s missing 'kubeconfig' key", ref.Namespace, ref.Name)
+		return nil, fmt.Errorf("%w: %s/%s", ErrMissingKubeconfigKey, ref.Namespace, ref.Name)
 	}
 
 	// Parse the kubeconfig API config first to check for file paths before
 	// RESTConfigFromKubeConfig tries to read them and fails with a confusing error.
 	apiCfg, err := clientcmd.Load(kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("parsing kubeconfig from secret %s/%s: %w", ref.Namespace, ref.Name, err)
+		return nil, fmt.Errorf("%w %s/%s: %w", ErrParsingKubeconfig, ref.Namespace, ref.Name, err)
 	}
 	for name, cluster := range apiCfg.Clusters {
 		if cluster.CertificateAuthority != "" {
-			return nil, fmt.Errorf("admin kubeconfig secret %s/%s cluster %q uses certificate-authority file path; use 'kubectl config view --flatten' to convert to inline data", ref.Namespace, ref.Name, name)
+			return nil, fmt.Errorf("admin kubeconfig secret %s/%s cluster %q: %w", ref.Namespace, ref.Name, name, ErrCertFilePathUsed)
 		}
 	}
 	for name, authInfo := range apiCfg.AuthInfos {
 		if authInfo.ClientCertificate != "" || authInfo.ClientKey != "" {
-			return nil, fmt.Errorf("admin kubeconfig secret %s/%s user %q uses client-certificate/key file paths; use 'kubectl config view --flatten' to convert to inline data", ref.Namespace, ref.Name, name)
+			return nil, fmt.Errorf("admin kubeconfig secret %s/%s user %q: %w", ref.Namespace, ref.Name, name, ErrClientCertFilePathUsed)
 		}
 		if authInfo.TokenFile != "" {
-			return nil, fmt.Errorf("admin kubeconfig secret %s/%s user %q uses tokenFile which would read the hub pod's SA token; use a static token instead", ref.Namespace, ref.Name, name)
+			return nil, fmt.Errorf("admin kubeconfig secret %s/%s user %q: %w", ref.Namespace, ref.Name, name, ErrTokenFileUsed)
 		}
 	}
 
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("parsing kubeconfig from secret %s/%s: %w", ref.Namespace, ref.Name, err)
+		return nil, fmt.Errorf("%w %s/%s: %w", ErrParsingKubeconfig, ref.Namespace, ref.Name, err)
 	}
 
 	if cfg.BearerToken == "" && len(cfg.CertData) == 0 {
-		return nil, fmt.Errorf("admin kubeconfig secret %s/%s must contain a token or client certificate; exec-based auth (e.g. oc login) is not supported", ref.Namespace, ref.Name)
+		return nil, fmt.Errorf("admin kubeconfig secret %s/%s: %w", ref.Namespace, ref.Name, ErrUnsupportedAuth)
 	}
 
 	return cfg, nil

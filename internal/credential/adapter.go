@@ -71,7 +71,7 @@ func BuildAdapterCredentialSecret(
 	}
 
 	if err := controllerutil.SetControllerReference(sc, secret, scheme); err != nil {
-		return nil, fmt.Errorf("setting controller reference on adapter credential for spoke %q: %w", sc.Name, err)
+		return nil, fmt.Errorf("%w on adapter credential for spoke %q: %w", ErrSettingOwnerRef, sc.Name, err)
 	}
 
 	return secret, nil
