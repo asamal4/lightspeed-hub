@@ -18,7 +18,6 @@ package controller_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -964,7 +963,7 @@ current-context: spoke
 	})
 
 	Describe("Sentinel error wrapping", func() {
-		It("wraps connectivity failure with ErrCheckingServerVersion", func() {
+		It("surfaces ErrCheckingServerVersion text in Connected condition message", func() {
 			sc := newSpokeClusterWithFinalizer("test-spoke-sentinel")
 			hubClient := fake.NewClientBuilder().
 				WithScheme(newTestScheme()).
@@ -976,19 +975,25 @@ current-context: spoke
 				cfg: &rest.Config{Host: "https://api.spoke.example.com:6443", BearerToken: "t"},
 			}
 			reconciler := controller.NewSpokeClusterReconciler(hubClient, newTestScheme(), credSource, testNamespace)
-			connectivityErr := fmt.Errorf("dial tcp: refused")
+			// Inject a connectivity error that wraps the sentinel, as defaultCheckConnectivity does.
 			reconciler.CheckConnectivity = func(_ *rest.Config) error {
-				return fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, connectivityErr)
+				return fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, fmt.Errorf("dial tcp: refused"))
 			}
 
 			_, reconcileErr := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: sc.Name},
 			})
-			// connectivity failure → handleConnectivityFailure → returns nil err (condition only)
+			// Connectivity failure → handleConnectivityFailure → nil return, condition only.
 			Expect(reconcileErr).NotTo(HaveOccurred())
-			// But the injected error wraps the sentinel — verify our wrapping pattern compiles and matches
-			injected := fmt.Errorf("%w: %w", controller.ErrCheckingServerVersion, connectivityErr)
-			Expect(errors.Is(injected, controller.ErrCheckingServerVersion)).To(BeTrue())
+
+			// Verify the reconciler surfaces the sentinel text in the Connected condition message,
+			// which is the observable behavior callers rely on.
+			var updated hubv1alpha1.SpokeCluster
+			Expect(hubClient.Get(ctx, types.NamespacedName{Name: sc.Name}, &updated)).To(Succeed())
+			condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeConnected)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Message).To(ContainSubstring(controller.ErrCheckingServerVersion.Error()))
 		})
 	})
 })

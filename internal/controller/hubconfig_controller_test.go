@@ -19,11 +19,11 @@ package controller_test
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	hubv1alpha1 "github.com/openshift/lightspeed-hub/api/v1alpha1"
 	"github.com/openshift/lightspeed-hub/internal/controller"
@@ -120,12 +122,33 @@ var _ = Describe("HubConfigReconciler", func() {
 	})
 
 	It("ensureAdapterStack error wraps ErrEnsuringAdapterStack", func() {
-		// Verify the sentinel wrapping pattern: ErrEnsuringAdapterStack is what
-		// hubconfig_controller wraps ensureAdapterStack failures with.
-		// We test the wrapping pattern directly since the fake client doesn't
-		// fail on Create in a way that propagates to the reconciler error.
-		innerErr := controller.ErrEnsuringAdapterStack
-		wrapped := fmt.Errorf("%w: %w", controller.ErrEnsuringAdapterStack, innerErr)
-		Expect(errors.Is(wrapped, controller.ErrEnsuringAdapterStack)).To(BeTrue())
+		// Pre-create HubConfig with the finalizer already set so the reconciler
+		// skips the finalizer-add step and goes straight to ensureAdapterStack.
+		hc := &hubv1alpha1.HubConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "cluster",
+				Finalizers: []string{"hub.openshift.io/adapter-cleanup"},
+			},
+		}
+		injectErr := errors.New("server unavailable")
+		fc := fake.NewClientBuilder().
+			WithScheme(hubTestScheme()).
+			WithObjects(hc).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return injectErr
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		reconciler := controller.NewHubConfigReconciler(fc, testNamespace, testImage)
+		_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: "cluster"},
+		})
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, controller.ErrEnsuringAdapterStack)).To(BeTrue())
 	})
 })

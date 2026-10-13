@@ -77,7 +77,7 @@ var (
 	ErrDeletingAdapterResource   = errors.New("deleting adapter resource")
 	ErrCreatingAdapterDeployment = errors.New("creating Deployment")
 	ErrGettingAdapterDeployment  = errors.New("getting existing Deployment")
-	ErrUpdatingAdapterDeployment = errors.New("updating Deployment image")
+	ErrUpdatingAdapterDeployment = errors.New("updating Deployment")
 	ErrGettingAdapterForRestart  = errors.New("getting adapter Deployment for restart")
 	ErrUpdatingAdapterForRestart = errors.New("updating adapter Deployment for restart")
 )
