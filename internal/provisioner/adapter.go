@@ -18,6 +18,7 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -101,8 +102,11 @@ func ProvisionAdapter(ctx context.Context, spokeClient client.Client) error {
 }
 
 // DeprovisionAdapter removes spoke-side adapter resources in reverse creation order.
-// Best-effort — errors are logged but do not block deletion.
-func DeprovisionAdapter(ctx context.Context, spokeClient client.Client, log logr.Logger) {
+// Best-effort — all resources are attempted regardless of individual failures,
+// NotFound errors are ignored, and the aggregated error (if any) is returned to the caller.
+func DeprovisionAdapter(ctx context.Context, spokeClient client.Client, log logr.Logger) error {
+	var errs []error
+
 	tokenSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      AlertAdapterTokenSecret,
@@ -112,6 +116,7 @@ func DeprovisionAdapter(ctx context.Context, spokeClient client.Client, log logr
 	if err := spokeClient.Delete(ctx, tokenSecret); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete alert adapter token Secret", "name", AlertAdapterTokenSecret, "namespace", ManagedNamespace)
+			errs = append(errs, err)
 		}
 	}
 
@@ -124,6 +129,7 @@ func DeprovisionAdapter(ctx context.Context, spokeClient client.Client, log logr
 	if err := spokeClient.Delete(ctx, rb); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete alert adapter RoleBinding", "name", AlertAdapterRoleBinding, "namespace", MonitoringNamespace)
+			errs = append(errs, err)
 		}
 	}
 
@@ -136,6 +142,9 @@ func DeprovisionAdapter(ctx context.Context, spokeClient client.Client, log logr
 	if err := spokeClient.Delete(ctx, sa); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete alert adapter ServiceAccount", "name", AlertAdapterServiceAccount, "namespace", ManagedNamespace)
+			errs = append(errs, err)
 		}
 	}
+
+	return errors.Join(errs...)
 }

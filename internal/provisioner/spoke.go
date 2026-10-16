@@ -18,6 +18,7 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -122,9 +123,10 @@ func Provision(ctx context.Context, spokeClient client.Client) error {
 }
 
 // Deprovision deletes the resources from the spoke cluster in reverse order.
-// It is best-effort: errors are logged but not returned, and NotFound errors are ignored.
-func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger) {
-	// Delete in reverse order: ClusterRoleBindings, ServiceAccount, Namespace
+// It is best-effort: all resources are attempted regardless of individual failures,
+// NotFound errors are ignored, and the aggregated error (if any) is returned to the caller.
+func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger) error {
+	var errs []error
 
 	// 1. Delete ClusterRoleBinding cluster-monitoring-view
 	crbMonitoring := &rbacv1.ClusterRoleBinding{
@@ -135,6 +137,7 @@ func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger
 	if err := spokeClient.Delete(ctx, crbMonitoring); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete ClusterRoleBinding", "name", ClusterRoleBindingMonitoringView)
+			errs = append(errs, err)
 		}
 	}
 
@@ -147,6 +150,7 @@ func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger
 	if err := spokeClient.Delete(ctx, crbReader); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete ClusterRoleBinding", "name", ClusterRoleBindingClusterReader)
+			errs = append(errs, err)
 		}
 	}
 
@@ -160,6 +164,7 @@ func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger
 	if err := spokeClient.Delete(ctx, sa); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete ServiceAccount", "name", ServiceAccountName, "namespace", ManagedNamespace)
+			errs = append(errs, err)
 		}
 	}
 
@@ -172,6 +177,9 @@ func Deprovision(ctx context.Context, spokeClient client.Client, log logr.Logger
 	if err := spokeClient.Delete(ctx, ns); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Error(err, "failed to delete Namespace", "name", ManagedNamespace)
+			errs = append(errs, err)
 		}
 	}
+
+	return errors.Join(errs...)
 }

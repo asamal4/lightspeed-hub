@@ -25,8 +25,10 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -332,7 +334,9 @@ func TestDeprovision(t *testing.T) {
 				Build()
 
 			log := logr.Discard()
-			Deprovision(context.Background(), c, log)
+			if err := Deprovision(context.Background(), c, log); err != nil {
+				t.Errorf("Deprovision() unexpected error: %v", err)
+			}
 
 			if tt.validateDeleted {
 				// Verify namespace is deleted
@@ -369,6 +373,66 @@ func TestDeprovision(t *testing.T) {
 				if err == nil {
 					t.Errorf("ClusterRoleBinding %s still exists after Deprovision", ClusterRoleBindingMonitoringView)
 				}
+			}
+		})
+	}
+}
+
+func TestDeprovision_ReturnsErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	injectErr := fmt.Errorf("permission denied")
+
+	tests := []struct {
+		name      string
+		intercept interceptor.Funcs
+		wantErr   bool
+	}{
+		{
+			name: "all deletes fail returns aggregated error",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					return injectErr
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "namespace delete fails returns error",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*corev1.Namespace); ok {
+						return injectErr
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "NotFound errors are not failures",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					return apierrors.NewNotFound(schema.GroupResource{}, obj.GetName())
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithInterceptorFuncs(tt.intercept).
+				Build()
+
+			log := logr.Discard()
+			err := Deprovision(context.Background(), c, log)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Deprovision() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
