@@ -307,8 +307,12 @@ func (r *SpokeClusterReconciler) cleanupSpokeResources(ctx context.Context, sc *
 					spokeCleanupFailed = true
 				} else {
 					logger.Info("Deprovisioning spoke resources")
-					provisioner.DeprovisionAdapter(ctx, spokeClient, logger)
-					provisioner.Deprovision(ctx, spokeClient, logger)
+					if err := provisioner.DeprovisionAdapter(ctx, spokeClient, logger); err != nil {
+						spokeCleanupFailed = true
+					}
+					if err := provisioner.Deprovision(ctx, spokeClient, logger); err != nil {
+						spokeCleanupFailed = true
+					}
 				}
 			}
 		}
@@ -317,7 +321,6 @@ func (r *SpokeClusterReconciler) cleanupSpokeResources(ctx context.Context, sc *
 		spokeCleanupFailed = true
 	}
 
-	// TODO: OLS-4158 have Deprovision return errors for Event emission
 	if spokeCleanupFailed && r.recorder != nil {
 		r.recorder.Eventf(sc, corev1.EventTypeWarning, "SpokeCleanupFailed",
 			"Spoke-side cleanup failed (check operator logs for details); hub-side cleanup proceeded")

@@ -35,6 +35,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	hubv1alpha1 "github.com/openshift/lightspeed-hub/api/v1alpha1"
 	"github.com/openshift/lightspeed-hub/internal/controller"
@@ -853,6 +854,82 @@ current-context: spoke
 			}
 
 			// Should have emitted a warning event
+			Expect(fakeRecorder.Events).ToNot(BeEmpty())
+			event := <-fakeRecorder.Events
+			Expect(event).To(ContainSubstring("Warning"))
+			Expect(event).To(ContainSubstring("SpokeCleanupFailed"))
+		})
+
+		It("should emit warning event when Deprovision delete calls fail", func() {
+			sc := newSpokeClusterDeleting("test-spoke")
+
+			standingSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      credential.StandingKubeconfigName(sc.Name),
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{
+					credential.KubeconfigKey: []byte(`
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://api.spoke.example.com:6443
+    certificate-authority-data: ZmFrZS1jYQ==
+  name: spoke
+users:
+- user:
+    token: fake-token
+  name: spoke-user
+contexts:
+- context:
+    cluster: spoke
+    user: spoke-user
+  name: spoke
+current-context: spoke
+`),
+				},
+			}
+
+			hubClient := fake.NewClientBuilder().
+				WithScheme(newTestScheme()).
+				WithObjects(sc, standingSecret, defaultHubConfig()).
+				WithStatusSubresource(&hubv1alpha1.SpokeCluster{}).
+				Build()
+
+			reconciler := controller.NewSpokeClusterReconciler(hubClient, newTestScheme(), &fakeCredentialSource{}, testNamespace)
+
+			fakeRecorder := record.NewFakeRecorder(10)
+			reconciler.SetEventRecorder(fakeRecorder)
+
+			// Spoke client is reachable but all Delete calls fail (e.g. RBAC denial)
+			injectErr := fmt.Errorf("forbidden")
+			reconciler.NewSpokeClient = func(cfg *rest.Config) (client.Client, error) {
+				return fake.NewClientBuilder().
+					WithScheme(newTestScheme()).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+							return injectErr
+						},
+					}).
+					Build(), nil
+			}
+
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: sc.Name},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			// Finalizer should still be removed
+			var updated hubv1alpha1.SpokeCluster
+			err = hubClient.Get(ctx, types.NamespacedName{Name: sc.Name}, &updated)
+			if err == nil {
+				Expect(updated.Finalizers).NotTo(ContainElement(spokeClusterFinalizer))
+			}
+
+			// Should have emitted a warning event for the delete failures
 			Expect(fakeRecorder.Events).ToNot(BeEmpty())
 			event := <-fakeRecorder.Events
 			Expect(event).To(ContainSubstring("Warning"))
