@@ -25,8 +25,10 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -213,7 +215,9 @@ func TestDeprovisionAdapter(t *testing.T) {
 				Build()
 
 			log := logr.Discard()
-			DeprovisionAdapter(context.Background(), c, log)
+			if err := DeprovisionAdapter(context.Background(), c, log); err != nil {
+				t.Errorf("DeprovisionAdapter() unexpected error: %v", err)
+			}
 
 			if tt.validateDeleted {
 				sa := &corev1.ServiceAccount{}
@@ -306,6 +310,66 @@ func TestProvisionAdapter_SentinelErrors(t *testing.T) {
 			}
 			if !errors.Is(err, tt.wantSentinel) {
 				t.Errorf("expected errors.Is(err, %v), got: %v", tt.wantSentinel, err)
+			}
+		})
+	}
+}
+
+func TestDeprovisionAdapter_ReturnsErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	injectErr := fmt.Errorf("permission denied")
+
+	tests := []struct {
+		name      string
+		intercept interceptor.Funcs
+		wantErr   bool
+	}{
+		{
+			name: "all deletes fail returns aggregated error",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					return injectErr
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "SA delete fails returns error",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*corev1.ServiceAccount); ok {
+						return injectErr
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "NotFound errors are not failures",
+			intercept: interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					return apierrors.NewNotFound(schema.GroupResource{}, obj.GetName())
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithInterceptorFuncs(tt.intercept).
+				Build()
+
+			log := logr.Discard()
+			err := DeprovisionAdapter(context.Background(), c, log)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeprovisionAdapter() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
