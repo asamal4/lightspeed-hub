@@ -308,9 +308,11 @@ func (r *SpokeClusterReconciler) cleanupSpokeResources(ctx context.Context, sc *
 				} else {
 					logger.Info("Deprovisioning spoke resources")
 					if err := provisioner.DeprovisionAdapter(ctx, spokeClient, logger); err != nil {
+						logger.Error(err, "Failed to deprovision adapter resources")
 						spokeCleanupFailed = true
 					}
 					if err := provisioner.Deprovision(ctx, spokeClient, logger); err != nil {
+						logger.Error(err, "Failed to deprovision spoke resources")
 						spokeCleanupFailed = true
 					}
 				}

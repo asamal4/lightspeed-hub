@@ -851,6 +851,8 @@ current-context: spoke
 			err = hubClient.Get(ctx, types.NamespacedName{Name: sc.Name}, &updated)
 			if err == nil {
 				Expect(updated.Finalizers).NotTo(ContainElement(spokeClusterFinalizer))
+			} else {
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "expected NotFound, got unexpected error")
 			}
 
 			// Should have emitted a warning event
@@ -927,6 +929,8 @@ current-context: spoke
 			err = hubClient.Get(ctx, types.NamespacedName{Name: sc.Name}, &updated)
 			if err == nil {
 				Expect(updated.Finalizers).NotTo(ContainElement(spokeClusterFinalizer))
+			} else {
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "expected NotFound, got unexpected error")
 			}
 
 			// Should have emitted a warning event for the delete failures
